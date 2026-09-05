@@ -22,15 +22,24 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-        with:
-          lfs: true
 
+      # Force Git LFS to pull the real data if it was stuck as a pointer
+      - name: Force Fetch LFS Files
+        run: |
+          git lfs install
+          git lfs pull
+          
       - name: Setup Blender Engine
         uses: bradyajohnston/setup-blender@v5
         with:
           version: '4.2'
 
-      # We pass both the start_frame and total_frames to the script, separated by spaces
+      # We add a step to print the file size so you can diagnose it if it crashes
+      - name: Check File Integrity
+        run: |
+          echo "Checking file size for ${{ github.event.inputs.blend_file }}..."
+          ls -lh "${{ github.event.inputs.blend_file }}"
+
       - name: Execute 10-Frame Render
         run: |
           blender -b "${{ github.event.inputs.blend_file }}" -P ./render_batch.py -- ${{ github.event.inputs.start_frame }} ${{ github.event.inputs.total_frames }}
@@ -42,7 +51,6 @@ jobs:
           path: output/
           retention-days: 5
 
-      # This passes the file name, next frame, and total frames down the chain
       - name: Chain Next Batch Automatically
         run: |
           FILE="${{ github.event.inputs.blend_file }}"
