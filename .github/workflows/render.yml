@@ -1,12 +1,16 @@
 name: Public Blender Render Farm
-
 on:
   workflow_dispatch:
     inputs:
       blend_file:
-        description: 'Name of the .blend file (e.g., project.blend)'
+        description: 'Select the .blend file to render:'
         required: true
-        default: 'project.blend'
+        default: 'Dominos.blend'
+        type: choice
+        options:
+          - 'Dominos.blend'
+          - 'sword.blend'
+          - 'project.blend'
       start_frame:
         description: 'Frame to start rendering from'
         required: true
@@ -22,7 +26,7 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-          
+
       - name: Setup Blender Engine
         uses: bradyajohnston/setup-blender@v5
         with:
@@ -32,36 +36,44 @@ jobs:
         run: |
           blender -b "${{ github.event.inputs.blend_file }}" -P ./render_batch.py -- ${{ github.event.inputs.start_frame }} ${{ github.event.inputs.total_frames }}
 
-      - name: Upload Finished Frames
+      # Upload first subset of rendered frames
+      - name: Upload Frames 1 to 50
         uses: actions/upload-artifact@v4
         with:
-          name: frames-batch-${{ github.event.inputs.start_frame }}
-          path: output/
+          name: frames-part-1
+          path: |
+            output/frame_000[1-9].png
+            output/frame_00[1-4][0-9].png
+            output/frame_0050.png
           compression-level: 0
-          retention-days: 2
+
+      # Upload second subset of rendered frames
+      - name: Upload Frames 51 to 100
+        uses: actions/upload-artifact@v4
+        with:
+          name: frames-part-2
+          path: |
+            output/frame_005[1-9].png
+            output/frame_00[6-9][0-9].png
+            output/frame_0100.png
+          compression-level: 0
+
+      # Upload runtime logs separately
+      - name: Upload Execution Logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: render-logs
+          path: next_frame.txt
 
       - name: Chain Next Batch Dynamically
         run: |
           FILE="${{ github.event.inputs.blend_file }}"
           MAX_FRAMES=${{ github.event.inputs.total_frames }}
-          
-          # Read the precise next frame calculated by the Python time checker
           NEXT_START=$(cat next_frame.txt)
-          
           if [ $NEXT_START -le $MAX_FRAMES ]; then
-            echo "Spawning next batch starting exactly at frame $NEXT_START..."
-            curl -X POST \
-              -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-              -H "Accept: application/vnd.github.v3+json" \
-              https://github.com{{ github.repository }}/actions/workflows/render.yml/dispatches \
-              -d "{\"ref\":\"main\", \"inputs\":{\"blend_file\":\"$FILE\", \"start_frame\":\"$NEXT_START\", \"total_frames\":\"$MAX_FRAMES\"}}"
+            curl -X POST -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${{ github.repository }}/actions/workflows/render.yml/dispatches -d "{\"ref\":\"main\", \"inputs\":{\"blend_file\":\"$FILE\", \"start_frame\":\"$NEXT_START\", \"total_frames\":\"$MAX_FRAMES\"}}"
           else
-            echo "All frames rendered! Triggering final MP4 compilation workflow..."
-            curl -X POST \
-              -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-              -H "Accept: application/vnd.github.v3+json" \
-              https://github.com{{ github.repository }}/actions/workflows/render.yml/dispatches \
-              -d "{\"ref\":\"main\", \"inputs\":{\"blend_file\":\"$FILE\", \"start_frame\":\"stitch\", \"total_frames\":\"$MAX_FRAMES\"}}"
+            curl -X POST -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${{ github.repository }}/actions/workflows/render.yml/dispatches -d "{\"ref\":\"main\", \"inputs\":{\"blend_file\":\"$FILE\", \"start_frame\":\"stitch\", \"total_frames\":\"$MAX_FRAMES\"}}"
           fi
 
   compile-video:
@@ -75,12 +87,11 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: all_frames/
-          pattern: frames-batch-*
+          pattern: frames-*
           merge-multiple: true
 
       - name: Compile Video with FFmpeg
-        run: |
-          ffmpeg -framerate 24 -pattern_type glob -i 'all_frames/frame_*.png' -c:v libx264 -pix_fmt yuv420p final_video/animation.mp4
+        run: ffmpeg -framerate 24 -pattern_type glob -i 'all_frames/frame_*.png' -c:v libx264 -pix_fmt yuv420p final_video/animation.mp4
 
       - name: Upload Final MP4 Video
         uses: actions/upload-artifact@v4
