@@ -35,12 +35,21 @@ scene.cycles.adaptive_threshold = 0.05
 scene.cycles.use_denoising = True
 scene.cycles.denoiser = 'OPENIMAGEDENOISE'
 
-# Force the top-level property structure out of Video mode into Image mode first
+# First reset the top-level scene render format to PNG
+scene.render.filepath = os.path.abspath("./output/frame_0000.png")
 scene.render.image_settings.file_format = 'PNG'
+scene.render.image_settings.color_mode = 'RGBA'
+
+# Ensure individual view format is maintained
 try:
-    scene.render.image_settings.color_mode = 'RGBA'
-except TypeError:
-    scene.render.image_settings.color_mode = 'RGB'
+    scene.render.image_settings.views_format = 'INDIVIDUAL'
+except AttributeError:
+    pass
+
+try:
+    bpy.ops.image.output_set_extension()
+except Exception:
+    pass
 
 os.makedirs("./output", exist_ok=True)
 last_rendered_frame = start_frame - 1
