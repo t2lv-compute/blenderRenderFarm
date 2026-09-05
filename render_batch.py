@@ -2,22 +2,23 @@ import bpy
 import os
 import sys
 
-# Parse the arguments from the command line
+# Parse the arguments from the command line correctly
 try:
+    # Look for the '--' flag which separates Blender args from script args
     args = sys.argv[sys.argv.index("--") + 1:]
-    start_frame = int(args[0])
-    max_animation_frames = int(args[1])
+    start_frame = int(args[0])              # First argument after '--'
+    max_animation_frames = int(args[1])     # Second argument after '--'
 except (ValueError, IndexError):
-    # Fallback defaults if something goes wrong
+    # Fallback defaults if the arguments are missing or malformed
     start_frame = 1
     max_animation_frames = 100   
 
 end_frame = start_frame + 9  
 
-print(f"Rendering {bpy.data.filepath}")
+print(f"Opening file: {bpy.data.filepath}")
 print(f"Batch Range: Frame {start_frame} to {end_frame} (Total target: {max_animation_frames})")
 
-# Performance Optimizations
+# Performance Optimizations for GitHub's CPU
 scene = bpy.context.scene
 scene.render.engine = 'CYCLES'
 scene.cycles.device = 'CPU'
