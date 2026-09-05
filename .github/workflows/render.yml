@@ -120,7 +120,9 @@ jobs:
 
       # ADD THIS STEP TO INSTALL FFMPEG BEFORE COMPILING
       - name: Setup FFmpeg Environment
-        uses: FedericoCarboni/setup-ffmpeg@v3
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
 
       - name: Compile Video with FFmpeg
         run: ffmpeg -framerate 24 -pattern_type glob -i 'all_frames/frame_*.png' -c:v libx264 -pix_fmt yuv420p final_video/animation.mp4
