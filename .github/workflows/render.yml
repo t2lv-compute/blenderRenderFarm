@@ -22,38 +22,25 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-        with:
-          lfs: true
-
-      # Force Git LFS to pull the real data if it was stuck as a pointer
-      - name: Force Fetch LFS Files
-        run: |
-          git lfs install
-          git lfs pull
           
       - name: Setup Blender Engine
         uses: bradyajohnston/setup-blender@v5
         with:
-          version: '5.0'
-
-      # We add a step to print the file size so you can diagnose it if it crashes
-      - name: Check File Integrity
-        run: |
-          echo "Checking file size for ${{ github.event.inputs.blend_file }}..."
-          ls -lh "${{ github.event.inputs.blend_file }}"
+          version: '5.0' # Keep matched to your local version
 
       - name: Execute 10-Frame Render
         run: |
           blender -b "${{ github.event.inputs.blend_file }}" -P ./render_batch.py -- ${{ github.event.inputs.start_frame }} ${{ github.event.inputs.total_frames }}
 
-      - name: Zip and Upload Frames
+      - name: Upload Frames
         uses: actions/upload-artifact@v4
         with:
-          name: frames-${{ github.event.inputs.start_frame }}
+          name: frames-batch-${{ github.event.inputs.start_frame }}
           path: output/
-          retention-days: 5
+          compression-level: 0 # Upload raw unzipped frames
+          retention-days: 2
 
-      - name: Chain Next Batch Automatically
+      - name: Chain Next Batch or Trigger Video Stitch
         run: |
           FILE="${{ github.event.inputs.blend_file }}"
           START=${{ github.event.inputs.start_frame }}
@@ -61,12 +48,45 @@ jobs:
           NEXT_START=$((START + 10))
           
           if [ $NEXT_START -le $MAX_FRAMES ]; then
-            echo "Spawning next batch for $FILE starting at frame $NEXT_START out of $MAX_FRAMES..."
+            echo "Spawning next batch starting at frame $NEXT_START..."
             curl -X POST \
               -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
               -H "Accept: application/vnd.github.v3+json" \
               https://github.com{{ github.repository }}/actions/workflows/render.yml/dispatches \
               -d "{\"ref\":\"main\", \"inputs\":{\"blend_file\":\"$FILE\", \"start_frame\":\"$NEXT_START\", \"total_frames\":\"$MAX_FRAMES\"}}"
           else
-            echo "Animation render complete! All $MAX_FRAMES frames finished."
+            echo "All frames rendered! Triggering final MP4 compilation workflow..."
+            # This triggers our secondary compilation event
+            curl -X POST \
+              -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Accept: application/vnd.github.v3+json" \
+              https://github.com{{ github.repository }}/actions/workflows/render.yml/dispatches \
+              -d "{\"ref\":\"main\", \"inputs\":{\"blend_file\":\"$FILE\", \"start_frame\":\"stitch\", \"total_frames\":\"$MAX_FRAMES\"}}"
           fi
+
+  compile-video:
+    # This job only runs when start_frame is explicitly passed as "stitch"
+    if: ${{ github.event.inputs.start_frame == 'stitch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create Workspace Directories
+        run: mkdir -p all_frames final_video
+
+      - name: Download All Rendered Batches
+        uses: actions/download-artifact@v4
+        with:
+          path: all_frames/
+          pattern: frames-batch-*
+          merge-multiple: true # Flattens all separate batches into one directory
+
+      - name: Compile Video with FFmpeg
+        run: |
+          # Stitch png files into a high-quality H.264 MP4 video at 24 frames per second
+          ffmpeg -framerate 24 -pattern_type glob -i 'all_frames/frame_*.png' -c:v libx264 -pix_fmt yuv420p final_video/animation.mp4
+
+      - name: Upload Final MP4 Video
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-animation-mp4
+          path: final_video/animation.mp4
+          compression-level: 0 # Download the raw video directly without zipping!
