@@ -22,6 +22,8 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          lfs: true
 
       # Force Git LFS to pull the real data if it was stuck as a pointer
       - name: Force Fetch LFS Files
