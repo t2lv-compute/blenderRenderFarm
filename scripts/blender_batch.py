@@ -42,6 +42,8 @@ if enable_denoise:
     scene.cycles.denoiser = 'OPENIMAGEDENOISE'
 
 # Ensure Output Format is correct
+if hasattr(scene.render.image_settings, 'media_type'):
+    scene.render.image_settings.media_type = 'IMAGE'
 scene.render.image_settings.file_format = 'PNG'
 scene.render.image_settings.color_mode = 'RGBA'
 
