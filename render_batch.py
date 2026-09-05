@@ -13,8 +13,8 @@ CUTOFF_LIMIT = 350 * 60
 try:
     # Look for the '--' flag which separates Blender args from script args
     args = sys.argv[sys.argv.index("--") + 1:]
-    start_frame = int(args[0])              # FIX: Get the first item in the list
-    max_animation_frames = int(args[1])     # FIX: Get the second item in the list
+    start_frame = int(args[0])
+    max_animation_frames = int(args[1])
 except (ValueError, IndexError, TypeError):
     # Fallback defaults if the arguments are missing or malformed
     start_frame = 1
@@ -35,15 +35,14 @@ scene.cycles.adaptive_threshold = 0.05
 scene.cycles.use_denoising = True
 scene.cycles.denoiser = 'OPENIMAGEDENOISE'
 
-# First reset the top-level scene render format to PNG
-scene.render.filepath = os.path.abspath("./output/frame_0000.png")
+# Force format override to breakout from FFMPEG lock
 scene.render.image_settings.file_format = 'PNG'
-scene.render.image_settings.color_mode = 'RGBA'
+scene.render.image_settings.color_mode = 'RGBA' if 'RGBA' in scene.render.image_settings.color_mode else 'RGB'
 
-# Ensure individual view format is maintained
+# Reset view settings safely
 try:
     scene.render.image_settings.views_format = 'INDIVIDUAL'
-except AttributeError:
+except (AttributeError, TypeError):
     pass
 
 try:
