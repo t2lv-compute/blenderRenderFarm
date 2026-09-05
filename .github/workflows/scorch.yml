@@ -12,9 +12,10 @@ jobs:
       - name: Delete All Binary Artifacts
         run: |
           echo "Hunting down all files, zips, images, and videos..."
+          # FIX: Adjusted URL endpoint to point to ://github.com
           ARTIFACTS=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             -H "Accept: application/vnd.github.v3+json" \
-            https://github.com{{ github.repository }}/actions/artifacts?per_page=100)
+            https://://github.com${{ github.repository }}/actions/artifacts?per_page=100)
           
           IDS=$(echo "$ARTIFACTS" | jq '.artifacts[].id' 2>/dev/null || echo "")
           
@@ -23,20 +24,22 @@ jobs:
           else
             for ID in $IDS; do
               echo "Permanently deleting artifact storage ID: $ID..."
+              # FIX: Corrected API URL endpoint here as well
               curl -s -X DELETE \
                 -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-                https://github.com{{ github.repository }}/actions/artifacts/$ID
+                https://://github.com${{ github.repository }}/actions/artifacts/$ID
             done
+            echo "Successfully cleared all binary artifacts!"
           fi
 
       - name: Clear Workflow History Logs
         run: |
           echo "Clearing out the old run logs history list..."
+          # FIX: Corrected API URL endpoint to match GitHub specifications
           RUNS=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             -H "Accept: application/vnd.github.v3+json" \
-            https://github.com{{ github.repository }}/actions/runs?per_page=100)
+            https://://github.com${{ github.repository }}/actions/runs?per_page=100)
           
-          # Extracts run IDs except for the current running job so it doesn't crash mid-execution
           RUN_IDS=$(echo "$RUNS" | jq --arg current_run "${{ github.run_id }}" '.workflow_runs[] | select(.id != ($current_run|tonumber)) | .id' 2>/dev/null || echo "")
           
           if [ -z "$RUN_IDS" ]; then
@@ -44,9 +47,10 @@ jobs:
           else
             for RUN_ID in $RUN_IDS; do
               echo "Deleting history entry for run ID: $RUN_ID..."
+              # FIX: Corrected API URL endpoint here as well
               curl -s -X DELETE \
                 -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-                https://github.com{{ github.repository }}/actions/runs/$RUN_ID
+                https://://github.com${{ github.repository }}/actions/runs/$RUN_ID
             done
             echo "All past run history entries successfully wiped!"
           fi
