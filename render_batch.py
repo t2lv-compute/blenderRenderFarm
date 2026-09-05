@@ -7,7 +7,7 @@ import time
 start_time = time.time()
 
 # 5.5 hours in seconds (330 minutes). Gives a 30-minute safety buffer before the 6-hour limit.
-MAX_ALLOWED_TIME = 300 * 60 
+MAX_ALLOWED_TIME = 330 * 60 
 
 # Parse command line inputs
 try:
@@ -18,8 +18,7 @@ except (ValueError, IndexError):
     start_frame = 1
     max_animation_frames = 100
 
-# Calculate an arbitrarily large end frame for the loop
-# (The script will automatically stop early if it hits total frames or the time limit)
+# Calculate an large end frame boundary for the individual runner cycle
 end_frame = start_frame + 1000 
 
 print(f"Starting adaptive time batch from frame {start_frame}")
@@ -33,6 +32,10 @@ scene.cycles.use_adaptive_sampling = True
 scene.cycles.adaptive_threshold = 0.05
 scene.cycles.use_denoising = True
 scene.cycles.denoiser = 'OPENIMAGEDENOISE'
+
+# FIX: Force the file output layout to an image type so write_still=True won't crash
+scene.render.image_settings.file_format = 'PNG'
+scene.render.image_settings.color_mode = 'RGBA'
 
 os.makedirs("./output", exist_ok=True)
 last_rendered_frame = start_frame - 1
