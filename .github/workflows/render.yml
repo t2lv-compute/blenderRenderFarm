@@ -112,14 +112,13 @@ jobs:
         run: mkdir -p all_frames final_video
 
       - name: Download All Chunk Artifacts
-        uses: actions/upload-artifact@v4 # or download-artifact@v4
+        uses: actions/download-artifact@v4
         with:
           path: all_frames/
           pattern: frames-chunk-*
           merge-multiple: true
 
-      # ADD THIS STEP TO INSTALL FFMPEG BEFORE COMPILING
-      - name: Setup FFmpeg Environment
+      - name: Install FFmpeg via apt
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
