@@ -103,3 +103,8 @@ with open("next_frame.txt", "w") as f:
     f.write(str(last_rendered_frame + 1))
 
 print("Batch chunk completed.")
+# Add this right after the 'for frame in range(...)' loop ends:
+if frames_rendered_this_session > 0:
+    print(f"\n--- Chunk Summary ---")
+    print(f"Total Frames Rendered: {frames_rendered_this_session}")
+    print(f"Average Secs Per Frame: {avg_frame_time:.2f}s")
