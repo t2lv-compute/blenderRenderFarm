@@ -1,0 +1,60 @@
+name: Public Blender Render Farm
+
+on:
+  workflow_dispatch:
+    inputs:
+      blend_file:
+        description: 'Name of the .blend file (e.g., project.blend)'
+        required: true
+        default: 'project.blend'
+      start_frame:
+        description: 'Frame to start rendering from'
+        required: true
+        default: '1'
+      total_frames:
+        description: 'Total number of frames in the animation'
+        required: true
+        default: '100'
+
+jobs:
+  render-batch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Blender Engine
+        uses: bradyajohnston/setup-blender@v5
+        with:
+          version: '4.2'
+
+      # We pass both the start_frame and total_frames to the script, separated by spaces
+      - name: Execute 10-Frame Render
+        run: |
+          blender -b "${{ github.event.inputs.blend_file }}" -P ./render_batch.py -- ${{ github.event.inputs.start_frame }} ${{ github.event.inputs.total_frames }}
+
+      - name: Zip and Upload Frames
+        uses: actions/upload-artifact@v4
+        with:
+          name: frames-${{ github.event.inputs.start_frame }}
+          path: output/
+          retention-days: 5
+
+      # This passes the file name, next frame, and total frames down the chain
+      - name: Chain Next Batch Automatically
+        run: |
+          FILE="${{ github.event.inputs.blend_file }}"
+          START=${{ github.event.inputs.start_frame }}
+          MAX_FRAMES=${{ github.event.inputs.total_frames }}
+          NEXT_START=$((START + 10))
+          
+          if [ $NEXT_START -le $MAX_FRAMES ]; then
+            echo "Spawning next batch for $FILE starting at frame $NEXT_START out of $MAX_FRAMES..."
+            curl -X POST \
+              -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Accept: application/vnd.github.v3+json" \
+              https://github.com{{ github.repository }}/actions/workflows/render.yml/dispatches \
+              -d "{\"ref\":\"main\", \"inputs\":{\"blend_file\":\"$FILE\", \"start_frame\":\"$NEXT_START\", \"total_frames\":\"$MAX_FRAMES\"}}"
+          else
+            echo "Animation render complete! All $MAX_FRAMES frames finished."
+          fi
