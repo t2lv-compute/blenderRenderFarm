@@ -8,49 +8,27 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       actions: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Delete All Binary Artifacts
         run: |
           echo "Hunting down all files, zips, images, and videos..."
-          # FIX: Adjusted URL endpoint to point to ://github.com
-          ARTIFACTS=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Accept: application/vnd.github.v3+json" \
-            https://://github.com${{ github.repository }}/actions/artifacts?per_page=100)
           
-          IDS=$(echo "$ARTIFACTS" | jq '.artifacts[].id' 2>/dev/null || echo "")
-          
-          if [ -z "$IDS" ]; then
-            echo "No file storage artifacts found."
-          else
-            for ID in $IDS; do
-              echo "Permanently deleting artifact storage ID: $ID..."
-              # FIX: Corrected API URL endpoint here as well
-              curl -s -X DELETE \
-                -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-                https://://github.com${{ github.repository }}/actions/artifacts/$ID
-            done
-            echo "Successfully cleared all binary artifacts!"
-          fi
+          # List all artifacts, extract their IDs, and delete them cleanly via the GH CLI
+          gh api repos/${{ github.repository }}/actions/artifacts --paginate -q '.artifacts[].id' | while read -r id; do
+            echo "Permanently deleting artifact storage ID: $id..."
+            gh api -X DELETE repos/${{ github.repository }}/actions/artifacts/$id
+          done
+          echo "Successfully cleared all binary artifacts!"
 
       - name: Clear Workflow History Logs
         run: |
           echo "Clearing out the old run logs history list..."
-          # FIX: Corrected API URL endpoint to match GitHub specifications
-          RUNS=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Accept: application/vnd.github.v3+json" \
-            https://://github.com${{ github.repository }}/actions/runs?per_page=100)
           
-          RUN_IDS=$(echo "$RUNS" | jq --arg current_run "${{ github.run_id }}" '.workflow_runs[] | select(.id != ($current_run|tonumber)) | .id' 2>/dev/null || echo "")
-          
-          if [ -z "$RUN_IDS" ]; then
-            echo "Workflow history log is already empty."
-          else
-            for RUN_ID in $RUN_IDS; do
-              echo "Deleting history entry for run ID: $RUN_ID..."
-              # FIX: Corrected API URL endpoint here as well
-              curl -s -X DELETE \
-                -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-                https://://github.com${{ github.repository }}/actions/runs/$RUN_ID
-            done
-            echo "All past run history entries successfully wiped!"
-          fi
+          # List all past workflow runs, skip the active run, and delete them
+          gh api repos/${{ github.repository }}/actions/runs --paginate -q '.workflow_runs[] | select(.id != (${{ github.run_id }})) | .id' | while read -r run_id; do
+            echo "Deleting history entry for run ID: $run_id..."
+            gh api -X DELETE repos/${{ github.repository }}/actions/runs/$run_id
+          done
+          echo "All past run history entries successfully wiped!"
