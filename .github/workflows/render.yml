@@ -112,11 +112,15 @@ jobs:
         run: mkdir -p all_frames final_video
 
       - name: Download All Chunk Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/upload-artifact@v4 # or download-artifact@v4
         with:
           path: all_frames/
           pattern: frames-chunk-*
           merge-multiple: true
+
+      # ADD THIS STEP TO INSTALL FFMPEG BEFORE COMPILING
+      - name: Setup FFmpeg Environment
+        uses: FedericoCarboni/setup-ffmpeg@v3
 
       - name: Compile Video with FFmpeg
         run: ffmpeg -framerate 24 -pattern_type glob -i 'all_frames/frame_*.png' -c:v libx264 -pix_fmt yuv420p final_video/animation.mp4
