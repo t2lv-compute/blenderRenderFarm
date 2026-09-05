@@ -1,4 +1,4 @@
-name: Public Blender Render Farm
+name: Blender Render Farm
 on:
   workflow_dispatch:
     inputs:
@@ -19,10 +19,69 @@ on:
         description: 'Total number of frames in the animation'
         required: true
         default: '100'
+      chunks:
+        description: 'Number of parallel runners (Matrix instances)'
+        required: true
+        default: '8'
+        type: choice
+        options:
+          - '2'
+          - '4'
+          - '8'
+          - '16'
+      cycles_samples:
+        description: 'Cycles Render Samples (Lower = Faster)'
+        required: true
+        default: '32'
+      max_bounces:
+        description: 'Max Light Bounces (Speed vs Realism)'
+        required: true
+        default: '4'
+      enable_denoiser:
+        description: 'Enable OpenImageDenoise'
+        required: true
+        default: 'true'
+        type: boolean
 
 jobs:
-  render-batch:
+  generate-matrix:
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Calculate Parallel Matrix Chunks
+        id: set-matrix
+        run: |
+          START=${{ github.event.inputs.start_frame }}
+          TOTAL=${{ github.event.inputs.total_frames }}
+          CHUNKS=${{ github.event.inputs.chunks }}
+          
+          # Calculate frames per chunk
+          FRAMES_PER_CHUNK=$(( (TOTAL - START + 1 + CHUNKS - 1) / CHUNKS ))
+          
+          JSON="["
+          for (( i=0; i<CHUNKS; i++ )); do
+            C_START=$(( START + i * FRAMES_PER_CHUNK ))
+            C_END=$(( C_START + FRAMES_PER_CHUNK - 1 ))
+            if [ $C_END -gt $TOTAL ]; then
+              C_END=$TOTAL
+            fi
+            if [ $C_START -le $TOTAL ]; then
+              if [ $i -gt 0 ]; then JSON+=","; fi
+              JSON+="{\"id\": $i, \"start\": $C_START, \"end\": $C_END}"
+            fi
+          done
+          JSON+="]"
+          echo "matrix=$JSON" >> $GITHUB_OUTPUT
+
+  render-matrix:
+    needs: generate-matrix
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        chunk: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -32,62 +91,35 @@ jobs:
         with:
           version: '5.0'
 
-      - name: Execute Smart Render Cycle
+      - name: Execute Parallel Render Chunk
         run: |
-          blender -b "${{ github.event.inputs.blend_file }}" -P ./render_batch.py -- ${{ github.event.inputs.start_frame }} ${{ github.event.inputs.total_frames }}
+          blender -b "${{ github.event.inputs.blend_file }}" -P ./render_batch.py -- \
+            ${{ matrix.chunk.start }} \
+            ${{ matrix.chunk.end }} \
+            ${{ github.event.inputs.cycles_samples }} \
+            ${{ github.event.inputs.max_bounces }} \
+            ${{ github.event.inputs.enable_denoiser }}
 
-      # Upload first subset of rendered frames
-      - name: Upload Frames 1 to 50
+      - name: Upload Chunk Frames Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: frames-part-1
-          path: |
-            output/frame_000[1-9].png
-            output/frame_00[1-4][0-9].png
-            output/frame_0050.png
+          name: frames-chunk-${{ matrix.chunk.id }}
+          path: output/
           compression-level: 0
-
-      # Upload second subset of rendered frames
-      - name: Upload Frames 51 to 100
-        uses: actions/upload-artifact@v4
-        with:
-          name: frames-part-2
-          path: |
-            output/frame_005[1-9].png
-            output/frame_00[6-9][0-9].png
-            output/frame_0100.png
-          compression-level: 0
-
-      # Upload runtime logs separately
-      - name: Upload Execution Logs
-        uses: actions/upload-artifact@v4
-        with:
-          name: render-logs
-          path: next_frame.txt
-
-      - name: Chain Next Batch Dynamically
-        run: |
-          FILE="${{ github.event.inputs.blend_file }}"
-          MAX_FRAMES=${{ github.event.inputs.total_frames }}
-          NEXT_START=$(cat next_frame.txt)
-          if [ $NEXT_START -le $MAX_FRAMES ]; then
-            curl -X POST -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${{ github.repository }}/actions/workflows/render.yml/dispatches -d "{\"ref\":\"main\", \"inputs\":{\"blend_file\":\"$FILE\", \"start_frame\":\"$NEXT_START\", \"total_frames\":\"$MAX_FRAMES\"}}"
-          else
-            curl -X POST -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${{ github.repository }}/actions/workflows/render.yml/dispatches -d "{\"ref\":\"main\", \"inputs\":{\"blend_file\":\"$FILE\", \"start_frame\":\"stitch\", \"total_frames\":\"$MAX_FRAMES\"}}"
-          fi
+          retention-days: 2
 
   compile-video:
-    if: ${{ github.event.inputs.start_frame == 'stitch' }}
+    needs: render-matrix
     runs-on: ubuntu-latest
     steps:
       - name: Create Workspace Directories
         run: mkdir -p all_frames final_video
 
-      - name: Download All Rendered Batches
+      - name: Download All Chunk Artifacts
         uses: actions/download-artifact@v4
         with:
           path: all_frames/
-          pattern: frames-*
+          pattern: frames-chunk-*
           merge-multiple: true
 
       - name: Compile Video with FFmpeg
