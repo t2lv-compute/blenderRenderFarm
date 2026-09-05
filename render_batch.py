@@ -3,82 +3,86 @@ import os
 import sys
 import time
 
-# Start the clock the exact second the script initializes
+# Start clock tracking
 session_start = time.time()
+CUTOFF_LIMIT = 350 * 60  # 5 hours 50 minutes safety limit
 
-# Hard cutoff at 5 hours and 50 minutes (350 minutes) to leave a strict 10-minute export window
-CUTOFF_LIMIT = 350 * 60 
-
-# Parse command line inputs correctly by accessing individual list indexes
+# Parse Command Line Arguments
+# Syntax: blender -b file.blend -P render_batch.py -- <start> <end> <samples> <max_bounces> <enable_denoise>
 try:
-    # Look for the '--' flag which separates Blender args from script args
     args = sys.argv[sys.argv.index("--") + 1:]
     start_frame = int(args[0])
     max_animation_frames = int(args[1])
+    samples = int(args[2]) if len(args) > 2 else 32
+    max_bounces = int(args[3]) if len(args) > 3 else 4
+    enable_denoise = args[4].lower() == 'true' if len(args) > 4 else True
 except (ValueError, IndexError, TypeError):
-    # Fallback defaults if the arguments are missing or malformed
-    start_frame = 1
-    max_animation_frames = 100
+    start_frame, max_animation_frames = 1, 100
+    samples, max_bounces, enable_denoise = 32, 4, True
 
-# Set a large theoretical boundary for this specific run
-end_frame = start_frame + 1000 
+print(f"--- Starting Render Batch ---")
+print(f"Frames: {start_frame} to {max_animation_frames} | Samples: {samples} | Max Bounces: {max_bounces} | Denoise: {enable_denoise}")
 
-print(f"Starting predictive time batch from frame {start_frame}")
-
-# Render Engine Performance Settings
 scene = bpy.context.scene
+
+# Configure Cycles Engine
 scene.render.engine = 'CYCLES'
 scene.cycles.device = 'CPU'
-scene.cycles.samples = 32
+scene.cycles.samples = samples
 scene.cycles.use_adaptive_sampling = True
 scene.cycles.adaptive_threshold = 0.05
-scene.cycles.use_denoising = True
-scene.cycles.denoiser = 'OPENIMAGEDENOISE'
 
-# Force format override to breakout from FFMPEG lock
-scene.render.image_settings.file_format = 'PNG'
-scene.render.image_settings.color_mode = 'RGBA' if 'RGBA' in scene.render.image_settings.color_mode else 'RGB'
+# Speed Optimization: Cap Ray Bounces
+scene.cycles.max_bounces = max_bounces
+scene.cycles.diffuse_bounces = min(2, max_bounces)
+scene.cycles.glossy_bounces = min(2, max_bounces)
+scene.cycles.transmission_bounces = min(2, max_bounces)
 
-# Reset view settings safely
+# Speed Optimization: Cache Data in RAM across frames
+scene.render.use_persistent_data = True
+
+# Denoising Settings
+if enable_denoise:
+    scene.cycles.use_denoising = True
+    scene.cycles.denoiser = 'OPENIMAGEDENOISE'
+else:
+    scene.cycles.use_denoising = False
+
+# Fix Image Format Lockouts
 try:
-    scene.render.image_settings.views_format = 'INDIVIDUAL'
-except (AttributeError, TypeError):
-    pass
+    scene.render.image_settings.file_format = 'PNG'
+except TypeError:
+    bpy.context.scene.render.image_settings.file_format = 'PNG'
 
+scene.render.image_settings.color_mode = 'RGBA'
+
+# Texture Caching & Missing Image Handling (Prevents per-frame disk searching)
 try:
-    bpy.ops.image.output_set_extension()
+    bpy.ops.file.pack_all()
 except Exception:
     pass
+
+for img in bpy.data.images:
+    if img.source == 'FILE' and not img.has_data:
+        # Prevent Blender from repeatedly probing missing disk paths per frame
+        img.source = 'GENERATED'
 
 os.makedirs("./output", exist_ok=True)
 last_rendered_frame = start_frame - 1
 
-# Performance tracking variables
 total_render_time = 0
 frames_rendered_this_session = 0
 avg_frame_time = 0
 
-# Execute Loop
-for frame in range(start_frame, end_frame + 1):
-    # Condition A: We reached the target animation length
-    if frame > max_animation_frames:
-        print("Reached the end of the total animation length!")
-        break
-        
-    # Condition B: Predictive Time Check
+# Execution Loop
+for frame in range(start_frame, max_animation_frames + 1):
     elapsed_time = time.time() - session_start
-    
     predicted_next_frame_cost = avg_frame_time if frames_rendered_this_session > 0 else (5 * 60)
     
     if (elapsed_time + predicted_next_frame_cost) > CUTOFF_LIMIT:
-        print(f"\n⚠️ PREDICTIVE SAFETY TRIGGER:")
-        print(f"Elapsed Time: {elapsed_time/60:.2f} mins. Avg Frame Time: {avg_frame_time/60:.2f} mins.")
-        print(f"Next frame would likely finish at {(elapsed_time + predicted_next_frame_cost)/60:.2f} mins.")
-        print(f"Stopping render now to guarantee a 10+ minute file export window.")
-        print(f"Next start frame will be: {frame}")
+        print(f"\n⚠️ PREDICTIVE SAFETY TRIGGER: Halting run to preserve export window.")
         break
 
-    # Execute the individual frame render and time it
     frame_start = time.time()
     
     scene.frame_set(frame)
@@ -87,7 +91,6 @@ for frame in range(start_frame, end_frame + 1):
     
     frame_end = time.time()
     
-    # Update running render averages
     frame_duration = frame_end - frame_start
     total_render_time += frame_duration
     frames_rendered_this_session += 1
@@ -96,8 +99,7 @@ for frame in range(start_frame, end_frame + 1):
     last_rendered_frame = frame
     print(f"Frame {frame:04d} done in {frame_duration:.1f}s (Avg: {avg_frame_time:.1f}s)")
 
-# Write the precise next frame to a text file for GitHub Actions to read
 with open("next_frame.txt", "w") as f:
     f.write(str(last_rendered_frame + 1))
 
-print("Batch cycle safely completed.")
+print("Batch chunk completed.")
