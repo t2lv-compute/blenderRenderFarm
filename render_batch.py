@@ -9,12 +9,14 @@ session_start = time.time()
 # Hard cutoff at 5 hours and 50 minutes (350 minutes) to leave a strict 10-minute export window
 CUTOFF_LIMIT = 350 * 60 
 
-# Parse command line inputs
+# Parse command line inputs correctly by accessing individual list indexes
 try:
+    # Look for the '--' flag which separates Blender args from script args
     args = sys.argv[sys.argv.index("--") + 1:]
-    start_frame = int(args)
-    max_animation_frames = int(args)
-except (ValueError, IndexError):
+    start_frame = int(args[0])              # FIX: Get the first item in the list
+    max_animation_frames = int(args[1])     # FIX: Get the second item in the list
+except (ValueError, IndexError, TypeError):
+    # Fallback defaults if the arguments are missing or malformed
     start_frame = 1
     max_animation_frames = 100
 
@@ -33,8 +35,7 @@ scene.cycles.adaptive_threshold = 0.05
 scene.cycles.use_denoising = True
 scene.cycles.denoiser = 'OPENIMAGEDENOISE'
 
-# FIX: Force the top-level property structure out of Video mode into Image mode first
-# (This un-hides PNG from the internal Blender settings system)
+# Force the top-level property structure out of Video mode into Image mode first
 scene.render.image_settings.file_format = 'PNG'
 try:
     scene.render.image_settings.color_mode = 'RGBA'
