@@ -1,42 +1,35 @@
-name: Blender Render Farm
+name: Optimized Blender Render Farm
 on:
   workflow_dispatch:
     inputs:
       blend_file:
-        description: 'Path/name of the .blend file to render (e.g., custom_scene.blend):'
+        description: 'Filename/path of the .blend file:'
         required: true
         default: 'Dominos.blend'
-        type: string
       start_frame:
-        description: 'Frame to start rendering from'
+        description: 'Start Frame'
         required: true
         default: '1'
       total_frames:
-        description: 'Total number of frames in the animation'
+        description: 'Total Frames'
         required: true
         default: '100'
-      chunks:
-        description: 'Number of parallel runners (Matrix instances)'
+      frames_per_chunk:
+        description: 'Frames per job (Micro-chunk size for queueing)'
         required: true
-        default: '8'
-        type: choice
-        options:
-          - '2'
-          - '4'
-          - '8'
-          - '16'
+        default: '5'
+      max_runners:
+        description: 'Max concurrent runners (Max 20 for free tier)'
+        required: true
+        default: '16'
       cycles_samples:
-        description: 'Cycles Render Samples (Lower = Faster)'
+        description: 'Cycles Samples'
         required: true
         default: '32'
-      max_bounces:
-        description: 'Max Light Bounces (Speed vs Realism)'
-        required: true
-        default: '4'
       enable_denoiser:
-        description: 'Enable OpenImageDenoise'
+        description: 'Use OpenImageDenoise'
         required: true
-        default: true
+        default: 'true'
         type: boolean
 
 jobs:
@@ -45,58 +38,54 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
-      - name: Calculate Parallel Matrix Chunks
+      - name: Generate Dynamic Job Queue
         id: set-matrix
+        env:
+          START: ${{ inputs.start_frame }}
+          TOTAL: ${{ inputs.total_frames }}
+          CHUNK_SIZE: ${{ inputs.frames_per_chunk }}
         run: |
-          START=${{ github.event.inputs.start_frame }}
-          TOTAL=${{ github.event.inputs.total_frames }}
-          CHUNKS=${{ github.event.inputs.chunks }}
+          python3 -c '
+          import os, json
+          start = int(os.environ["START"])
+          total = int(os.environ["TOTAL"])
+          chunk_size = int(os.environ["CHUNK_SIZE"])
           
-          # Calculate frames per chunk
-          FRAMES_PER_CHUNK=$(( (TOTAL - START + 1 + CHUNKS - 1) / CHUNKS ))
+          chunks = []
+          for i, f_start in enumerate(range(start, total + 1, chunk_size)):
+              f_end = min(f_start + chunk_size - 1, total)
+              chunks.append({"id": i, "start": f_start, "end": f_end})
           
-          JSON="["
-          for (( i=0; i<CHUNKS; i++ )); do
-            C_START=$(( START + i * FRAMES_PER_CHUNK ))
-            C_END=$(( C_START + FRAMES_PER_CHUNK - 1 ))
-            if [ $C_END -gt $TOTAL ]; then
-              C_END=$TOTAL
-            fi
-            if [ $C_START -le $TOTAL ]; then
-              if [ $i -gt 0 ]; then JSON+=","; fi
-              JSON+="{\"id\": $i, \"start\": $C_START, \"end\": $C_END}"
-            fi
-          done
-          JSON+="]"
-          echo "matrix=$JSON" >> $GITHUB_OUTPUT
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"matrix={json.dumps(chunks)}\n")
+          '
 
   render-matrix:
     needs: generate-matrix
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      max-parallel: 16
+      max-parallel: ${{ fromJson(inputs.max_runners) }}
       matrix:
         chunk: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup Blender Engine
+      - name: Setup Blender Engine (Cached)
         uses: bradyajohnston/setup-blender@v5
         with:
           version: '5.0'
 
-      - name: Execute Parallel Render Chunk
+      - name: Execute Render Chunk
         run: |
-          blender -b "${{ github.event.inputs.blend_file }}" -P ./render_batch.py -- \
+          blender -b "${{ inputs.blend_file }}" -P scripts/blender_batch.py -- \
             ${{ matrix.chunk.start }} \
             ${{ matrix.chunk.end }} \
-            ${{ github.event.inputs.cycles_samples }} \
-            ${{ github.event.inputs.max_bounces }} \
-            ${{ github.event.inputs.enable_denoiser }}
+            ${{ inputs.cycles_samples }} \
+            ${{ inputs.enable_denoiser }}
 
-      - name: Upload Chunk Frames Artifact
+      - name: Upload Frames
         uses: actions/upload-artifact@v4
         with:
           name: frames-chunk-${{ matrix.chunk.id }}
@@ -108,25 +97,28 @@ jobs:
     needs: render-matrix
     runs-on: ubuntu-latest
     steps:
-      - name: Create Workspace Directories
+      - name: Prepare Directories
         run: mkdir -p all_frames final_video
 
-      - name: Download All Chunk Artifacts
+      - name: Download & Merge All Frames
         uses: actions/download-artifact@v4
         with:
           path: all_frames/
           pattern: frames-chunk-*
           merge-multiple: true
 
-      - name: Install FFmpeg via apt
+      - name: Fast Install FFmpeg
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
 
-      - name: Compile Video with FFmpeg
-        run: ffmpeg -framerate 24 -pattern_type glob -i 'all_frames/frame_*.png' -c:v libx264 -pix_fmt yuv420p final_video/animation.mp4
+      - name: Encode MP4 Video
+        run: |
+          ffmpeg -framerate 24 -pattern_type glob -i 'all_frames/frame_*.png' \
+            -c:v libx264 -preset fast -crf 18 -pix_fmt yuv420p \
+            final_video/animation.mp4
 
-      - name: Upload Final MP4 Video
+      - name: Upload Final Video
         uses: actions/upload-artifact@v4
         with:
           name: final-animation-mp4
