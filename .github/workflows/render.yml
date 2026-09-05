@@ -3,14 +3,10 @@ on:
   workflow_dispatch:
     inputs:
       blend_file:
-        description: 'Select the .blend file to render:'
+        description: 'Path/name of the .blend file to render (e.g., custom_scene.blend):'
         required: true
         default: 'Dominos.blend'
-        type: choice
-        options:
-          - 'Dominos.blend'
-          - 'sword.blend'
-          - 'project.blend'
+        type: string
       start_frame:
         description: 'Frame to start rendering from'
         required: true
