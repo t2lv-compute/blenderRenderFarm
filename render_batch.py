@@ -1,43 +1,64 @@
 import bpy
 import os
 import sys
+import time
 
-# Parse the arguments from the command line correctly
+# Start the clock the exact second the script initializes
+start_time = time.time()
+
+# 5.5 hours in seconds (330 minutes). Gives a 30-minute safety buffer before the 6-hour limit.
+MAX_ALLOWED_TIME = 300 * 60 
+
+# Parse command line inputs
 try:
-    # Look for the '--' flag which separates Blender args from script args
     args = sys.argv[sys.argv.index("--") + 1:]
-    start_frame = int(args[0])              # First argument after '--'
-    max_animation_frames = int(args[1])     # Second argument after '--'
+    start_frame = int(args[0])
+    max_animation_frames = int(args[1])
 except (ValueError, IndexError):
-    # Fallback defaults if the arguments are missing or malformed
     start_frame = 1
-    max_animation_frames = 100   
+    max_animation_frames = 100
 
-end_frame = start_frame + 9  
+# Calculate an arbitrarily large end frame for the loop
+# (The script will automatically stop early if it hits total frames or the time limit)
+end_frame = start_frame + 1000 
 
-print(f"Opening file: {bpy.data.filepath}")
-print(f"Batch Range: Frame {start_frame} to {end_frame} (Total target: {max_animation_frames})")
+print(f"Starting adaptive time batch from frame {start_frame}")
 
-# Performance Optimizations for GitHub's CPU
+# Render Engine Performance Settings
 scene = bpy.context.scene
 scene.render.engine = 'CYCLES'
 scene.cycles.device = 'CPU'
-scene.cycles.samples = 32                
-scene.cycles.use_adaptive_sampling = True 
-scene.cycles.adaptive_threshold = 0.05   
-scene.cycles.caustics_reflective = False 
-scene.cycles.caustics_refractive = False
+scene.cycles.samples = 32
+scene.cycles.use_adaptive_sampling = True
+scene.cycles.adaptive_threshold = 0.05
 scene.cycles.use_denoising = True
 scene.cycles.denoiser = 'OPENIMAGEDENOISE'
 
-# Execute Loop
 os.makedirs("./output", exist_ok=True)
+last_rendered_frame = start_frame - 1
+
+# Execute Loop
 for frame in range(start_frame, end_frame + 1):
+    # Condition A: We reached the end of your actual animation
     if frame > max_animation_frames:
-        print(f"Frame {frame} exceeds total animation limit of {max_animation_frames}. Stopping.")
+        print("Reached the end of the total animation length!")
         break
+        
+    # Condition B: Check the clock BEFORE rendering the next frame
+    elapsed_time = time.time() - start_time
+    if elapsed_time > MAX_ALLOWED_TIME:
+        print(f"⚠️ SAFETY TRIGGER: Script has run for {elapsed_time/60:.1f} minutes.")
+        print(f"Stopping render early to prevent GitHub timeout. Next start frame needs to be: {frame}")
+        break
+
+    # Execute the individual frame render
     scene.frame_set(frame)
     scene.render.filepath = os.path.abspath(f"./output/frame_{frame:04d}.png")
     bpy.ops.render.render(write_still=True)
+    last_rendered_frame = frame
 
-print("Batch processing complete.")
+# Write the next starting frame to a temporary text file so GitHub Actions can read it
+with open("next_frame.txt", "w") as f:
+    f.write(str(last_rendered_frame + 1))
+
+print("Batch cycle safely completed.")
