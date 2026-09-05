@@ -4,24 +4,24 @@ import sys
 import time
 
 # Start the clock the exact second the script initializes
-start_time = time.time()
+session_start = time.time()
 
-# 5.5 hours in seconds (330 minutes). Gives a 30-minute safety buffer before the 6-hour limit.
-MAX_ALLOWED_TIME = 330 * 60 
+# Hard cutoff at 5 hours and 50 minutes (350 minutes) to leave a strict 10-minute export window
+CUTOFF_LIMIT = 350 * 60 
 
 # Parse command line inputs
 try:
     args = sys.argv[sys.argv.index("--") + 1:]
-    start_frame = int(args[0])
-    max_animation_frames = int(args[1])
+    start_frame = int(args)
+    max_animation_frames = int(args)
 except (ValueError, IndexError):
     start_frame = 1
     max_animation_frames = 100
 
-# Calculate an large end frame boundary for the individual runner cycle
+# Set a large theoretical boundary for this specific run
 end_frame = start_frame + 1000 
 
-print(f"Starting adaptive time batch from frame {start_frame}")
+print(f"Starting predictive time batch from frame {start_frame}")
 
 # Render Engine Performance Settings
 scene = bpy.context.scene
@@ -33,34 +33,61 @@ scene.cycles.adaptive_threshold = 0.05
 scene.cycles.use_denoising = True
 scene.cycles.denoiser = 'OPENIMAGEDENOISE'
 
-# FIX: Force the file output layout to an image type so write_still=True won't crash
+# FIX: Force the top-level property structure out of Video mode into Image mode first
+# (This un-hides PNG from the internal Blender settings system)
 scene.render.image_settings.file_format = 'PNG'
-scene.render.image_settings.color_mode = 'RGBA'
+try:
+    scene.render.image_settings.color_mode = 'RGBA'
+except TypeError:
+    scene.render.image_settings.color_mode = 'RGB'
 
 os.makedirs("./output", exist_ok=True)
 last_rendered_frame = start_frame - 1
 
+# Performance tracking variables
+total_render_time = 0
+frames_rendered_this_session = 0
+avg_frame_time = 0
+
 # Execute Loop
 for frame in range(start_frame, end_frame + 1):
-    # Condition A: We reached the end of your actual animation
+    # Condition A: We reached the target animation length
     if frame > max_animation_frames:
         print("Reached the end of the total animation length!")
         break
         
-    # Condition B: Check the clock BEFORE rendering the next frame
-    elapsed_time = time.time() - start_time
-    if elapsed_time > MAX_ALLOWED_TIME:
-        print(f"⚠️ SAFETY TRIGGER: Script has run for {elapsed_time/60:.1f} minutes.")
-        print(f"Stopping render early to prevent GitHub timeout. Next start frame needs to be: {frame}")
+    # Condition B: Predictive Time Check
+    elapsed_time = time.time() - session_start
+    
+    predicted_next_frame_cost = avg_frame_time if frames_rendered_this_session > 0 else (5 * 60)
+    
+    if (elapsed_time + predicted_next_frame_cost) > CUTOFF_LIMIT:
+        print(f"\n⚠️ PREDICTIVE SAFETY TRIGGER:")
+        print(f"Elapsed Time: {elapsed_time/60:.2f} mins. Avg Frame Time: {avg_frame_time/60:.2f} mins.")
+        print(f"Next frame would likely finish at {(elapsed_time + predicted_next_frame_cost)/60:.2f} mins.")
+        print(f"Stopping render now to guarantee a 10+ minute file export window.")
+        print(f"Next start frame will be: {frame}")
         break
 
-    # Execute the individual frame render
+    # Execute the individual frame render and time it
+    frame_start = time.time()
+    
     scene.frame_set(frame)
     scene.render.filepath = os.path.abspath(f"./output/frame_{frame:04d}.png")
     bpy.ops.render.render(write_still=True)
+    
+    frame_end = time.time()
+    
+    # Update running render averages
+    frame_duration = frame_end - frame_start
+    total_render_time += frame_duration
+    frames_rendered_this_session += 1
+    avg_frame_time = total_render_time / frames_rendered_this_session
+    
     last_rendered_frame = frame
+    print(f"Frame {frame:04d} done in {frame_duration:.1f}s (Avg: {avg_frame_time:.1f}s)")
 
-# Write the next starting frame to a temporary text file so GitHub Actions can read it
+# Write the precise next frame to a text file for GitHub Actions to read
 with open("next_frame.txt", "w") as f:
     f.write(str(last_rendered_frame + 1))
 
