@@ -26,29 +26,30 @@ jobs:
       - name: Setup Blender Engine
         uses: bradyajohnston/setup-blender@v5
         with:
-          version: '5.0' # Keep matched to your local version
+          version: '4.2'
 
-      - name: Execute 10-Frame Render
+      - name: Execute Smart Render Cycle
         run: |
           blender -b "${{ github.event.inputs.blend_file }}" -P ./render_batch.py -- ${{ github.event.inputs.start_frame }} ${{ github.event.inputs.total_frames }}
 
-      - name: Upload Frames
+      - name: Upload Finished Frames
         uses: actions/upload-artifact@v4
         with:
           name: frames-batch-${{ github.event.inputs.start_frame }}
           path: output/
-          compression-level: 0 # Upload raw unzipped frames
+          compression-level: 0
           retention-days: 2
 
-      - name: Chain Next Batch or Trigger Video Stitch
+      - name: Chain Next Batch Dynamically
         run: |
           FILE="${{ github.event.inputs.blend_file }}"
-          START=${{ github.event.inputs.start_frame }}
           MAX_FRAMES=${{ github.event.inputs.total_frames }}
-          NEXT_START=$((START + 10))
+          
+          # Read the precise next frame calculated by the Python time checker
+          NEXT_START=$(cat next_frame.txt)
           
           if [ $NEXT_START -le $MAX_FRAMES ]; then
-            echo "Spawning next batch starting at frame $NEXT_START..."
+            echo "Spawning next batch starting exactly at frame $NEXT_START..."
             curl -X POST \
               -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
               -H "Accept: application/vnd.github.v3+json" \
@@ -56,7 +57,6 @@ jobs:
               -d "{\"ref\":\"main\", \"inputs\":{\"blend_file\":\"$FILE\", \"start_frame\":\"$NEXT_START\", \"total_frames\":\"$MAX_FRAMES\"}}"
           else
             echo "All frames rendered! Triggering final MP4 compilation workflow..."
-            # This triggers our secondary compilation event
             curl -X POST \
               -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
               -H "Accept: application/vnd.github.v3+json" \
@@ -65,7 +65,6 @@ jobs:
           fi
 
   compile-video:
-    # This job only runs when start_frame is explicitly passed as "stitch"
     if: ${{ github.event.inputs.start_frame == 'stitch' }}
     runs-on: ubuntu-latest
     steps:
@@ -77,11 +76,10 @@ jobs:
         with:
           path: all_frames/
           pattern: frames-batch-*
-          merge-multiple: true # Flattens all separate batches into one directory
+          merge-multiple: true
 
       - name: Compile Video with FFmpeg
         run: |
-          # Stitch png files into a high-quality H.264 MP4 video at 24 frames per second
           ffmpeg -framerate 24 -pattern_type glob -i 'all_frames/frame_*.png' -c:v libx264 -pix_fmt yuv420p final_video/animation.mp4
 
       - name: Upload Final MP4 Video
@@ -89,4 +87,4 @@ jobs:
         with:
           name: final-animation-mp4
           path: final_video/animation.mp4
-          compression-level: 0 # Download the raw video directly without zipping!
+          compression-level: 0
