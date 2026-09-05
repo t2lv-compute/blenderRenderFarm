@@ -36,7 +36,7 @@ on:
       enable_denoiser:
         description: 'Enable OpenImageDenoise'
         required: true
-        default: 'true'
+        default: true
         type: boolean
 
 jobs:
@@ -75,7 +75,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      max-parallel: 8
+      max-parallel: 16
       matrix:
         chunk: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
     steps:
