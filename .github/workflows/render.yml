@@ -79,11 +79,9 @@ jobs:
 
       - name: Execute Render Chunk
         run: |
-          blender -b "${{ inputs.blend_file }}" -P scripts/blender_batch.py -- \
-            ${{ matrix.chunk.start }} \
-            ${{ matrix.chunk.end }} \
-            ${{ inputs.cycles_samples }} \
-            ${{ inputs.enable_denoiser }}
+          blender -b "${{ inputs.blend_file }}" --factory-startup -noaudio -P scripts/blender_batch.py -- \
+            ${{ matrix.chunk.start }} \${{ matrix.chunk.end }} \
+            ${{ inputs.cycles_samples }} \${{ inputs.enable_denoiser }}
 
       - name: Upload Frames
         uses: actions/upload-artifact@v4
@@ -91,7 +89,7 @@ jobs:
           name: frames-chunk-${{ matrix.chunk.id }}
           path: output/
           compression-level: 0
-          retention-days: 2
+          retention-days: 1
 
   compile-video:
     needs: render-matrix
